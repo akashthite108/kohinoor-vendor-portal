@@ -1,0 +1,711 @@
+from datetime import datetime
+import glob
+import os
+import re
+import shutil
+import uuid
+from flask import Flask, redirect, render_template, request, send_file, url_for
+import openpyxl
+import pandas as pd
+
+app = Flask(__name__)
+
+# Define absolute base directory to prevent file-not-found errors on Render/local
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+SUBMISSIONS_DIR = os.path.join(BASE_DIR, 'submissions')
+VENDOR_SLIPS_DIR = os.path.join(BASE_DIR, 'vendor_filled_slips')
+COMPARISON_POOL_DIR = os.path.join(BASE_DIR, 'comparison_pool')
+MASTER_DB_CSV = os.path.join(BASE_DIR, 'master_procurement_database.csv')
+STAGING_LOG_PATH = os.path.join(BASE_DIR, 'master_staging_log.csv')
+
+# Automatically create necessary folders on app startup
+for directory in [SUBMISSIONS_DIR, VENDOR_SLIPS_DIR, COMPARISON_POOL_DIR]:
+    os.makedirs(directory, exist_ok=True)
+
+TEMPLATE_SHEET = 'Comparision Format Sheet.xlsx'
+
+
+def sanitize_filename(name):
+    """Removes invalid filesystem characters, brackets, and URLs from filenames."""
+    if not name:
+        return "unknown"
+    return re.sub(r'[^\w\-_.]', '_', str(name))
+
+
+def init_db():
+    if not os.path.exists(STAGING_LOG_PATH):
+        df = pd.DataFrame(columns=[
+            'Timestamp',
+            'RFQ_Code',
+            'Vendor_Name',
+            'GSTIN',
+            'File_Path',
+        ])
+        df.to_csv(STAGING_LOG_PATH, index=False)
+    rebuild_master_database()
+
+
+def assign_category(desc):
+    desc_lower = str(desc).lower()
+    if 'block' in desc_lower or 'brick' in desc_lower or 'aac' in desc_lower:
+        return 'Masonry & Blocks'
+    elif 'adhesive' in desc_lower or 'tile' in desc_lower or 'mortar' in desc_lower:
+        return 'Finishing & Adhesives'
+    elif 'pin' in desc_lower or 'wedge' in desc_lower or 'mivan' in desc_lower or 'formwork' in desc_lower:
+        return 'Formwork & Hardware'
+    elif 'waterproof' in desc_lower:
+        return 'Waterproofing'
+    else:
+        return 'General Civil Works'
+
+
+def rebuild_master_database():
+    slips = [
+        f
+        for f in glob.glob(os.path.join(VENDOR_SLIPS_DIR, '*.xlsx'))
+        if os.path.basename(f).startswith('RFQ_')
+        and '_Filled_' not in os.path.basename(f)
+        and not os.path.basename(f).startswith('~$')
+    ]
+    pool_slips = [
+        f
+        for f in glob.glob(os.path.join(COMPARISON_POOL_DIR, '*.xlsx'))
+        if os.path.basename(f).startswith('RFQ_')
+        and not os.path.basename(f).startswith('Kohinoor_Comparative')
+        and not os.path.basename(f).startswith('~$')
+    ]
+
+    all_slips = list(set(slips + pool_slips))
+    records = []
+    seen_files = set()
+
+    for f in all_slips:
+        fname = os.path.basename(f)
+        if fname in seen_files:
+            continue
+        seen_files.add(fname)
+        wb = None
+        try:
+            wb = openpyxl.load_workbook(f, data_only=True)
+            ws = wb.active
+
+            vendor_name = ws['F4'].value
+            rfq_code = ws['F5'].value
+            submission_date = ws['F6'].value
+            gstin = ws['F7'].value
+            vendor_contact = ws['F8'].value
+            vendor_phone = ws['F9'].value
+            vendor_email = ws['B9'].value
+            vendor_address = ws['B10'].value
+            project = ws['B4'].value
+            tower = ws['B5'].value
+
+            transport_term = ws['E18'].value
+            gst_term = ws['E19'].value
+            delivery_timeline = ws['E28'].value
+            payment_terms = ws['E29'].value
+            remarks = ws['E32'].value or 'N/A'
+
+            for r in range(13, 16):
+                desc = ws.cell(row=r, column=2).value
+                if desc:
+                    try:
+                        qty = float(ws.cell(row=r, column=4).value or 0)
+                    except:
+                        qty = 0.0
+                    unit = ws.cell(row=r, column=5).value
+                    brand = ws.cell(row=r, column=6).value
+                    try:
+                        rate_r0 = float(ws.cell(row=r, column=7).value or 0)
+                    except:
+                        rate_r0 = 0.0
+                    try:
+                        rate_r1 = float(ws.cell(row=r, column=8).value or rate_r0)
+                    except:
+                        rate_r1 = rate_r0
+
+                    amount = qty * rate_r1
+                    category = assign_category(desc)
+
+                    records.append({
+                        'Submission_Date': submission_date,
+                        'RFQ_Code': rfq_code,
+                        'Project': project,
+                        'Tower': tower,
+                        'Vendor_Name': vendor_name,
+                        'GSTIN': gstin,
+                        'Vendor_Phone': vendor_phone,
+                        'Vendor_Email': vendor_email,
+                        'Vendor_Address': vendor_address,
+                        'Remarks': remarks,
+                        'Material_Category': category,
+                        'Material_Description': desc,
+                        'Quantity': float(qty),
+                        'Unit': unit,
+                        'Brand': brand,
+                        'Rate_R0': float(rate_r0),
+                        'Rate_R1': float(rate_r1),
+                        'Basic_Amount': float(amount),
+                        'Transport': transport_term,
+                        'GST_Term': gst_term,
+                        'Delivery': delivery_timeline,
+                        'Payment_Terms': payment_terms,
+                        'Source_File': fname,
+                    })
+        except Exception as e:
+            print(f"Error reading slip {fname}: {e}")
+        finally:
+            if wb:
+                wb.close()
+
+    df = pd.DataFrame(records)
+    if not df.empty:
+        df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0.0)
+        df['Rate_R0'] = pd.to_numeric(df['Rate_R0'], errors='coerce').fillna(0.0)
+        df['Rate_R1'] = pd.to_numeric(df['Rate_R1'], errors='coerce').fillna(0.0)
+        df['Basic_Amount'] = pd.to_numeric(
+            df['Basic_Amount'], errors='coerce'
+        ).fillna(0.0)
+    else:
+        df = pd.DataFrame(columns=[
+            'Submission_Date', 'RFQ_Code', 'Project', 'Tower', 'Vendor_Name', 'GSTIN',
+            'Vendor_Phone', 'Vendor_Email', 'Vendor_Address', 'Remarks',
+            'Material_Category', 'Material_Description', 'Quantity', 'Unit', 'Brand',
+            'Rate_R0', 'Rate_R1', 'Basic_Amount', 'Transport', 'GST_Term', 'Delivery',
+            'Payment_Terms', 'Source_File'
+        ])
+    df.to_csv(MASTER_DB_CSV, index=False)
+    return df
+
+
+@app.route('/', methods=['GET', 'POST'])
+def vendor_portal():
+    if request.method == 'POST':
+        rfq_code = request.form.get('rfq_code') or request.form.get('rfq_code_hidden')
+        if not rfq_code or rfq_code.strip() == '':
+            rfq_code = f"RFQ-{uuid.uuid4().hex[:6].upper()}"
+    else:
+        rfq_code = f"RFQ-{uuid.uuid4().hex[:6].upper()}"
+
+    active_template = None
+    for candidate in ['RFQ.xlsx', 'RFQ.xlx.xlsx', 'RFQ_Master_Template.xlsx']:
+        if os.path.exists(candidate):
+            active_template = candidate
+            break
+
+    if not active_template:
+        return 'Error: RFQ template missing on server.', 500
+
+    wb = openpyxl.load_workbook(active_template)
+    ws = wb.active
+
+    def safe_set_cell(row_num, col_num, val):
+        cell = ws.cell(row=row_num, column=col_num)
+        coord = cell.coordinate
+        if isinstance(cell, openpyxl.cell.cell.MergedCell):
+            for merged_range in ws.merged_cells.ranges:
+                if coord in merged_range:
+                    ws.cell(row=merged_range.min_row, column=merged_range.min_col, value=val)
+                    return
+        cell.value = val
+
+    safe_set_cell(5, 6, rfq_code)
+
+    if request.method == 'POST':
+        safe_set_cell(4, 2, request.form.get('project_name', 'Kohinoor West View'))
+        safe_set_cell(5, 2, request.form.get('tower', 'Tower A - Phase 2'))
+        safe_set_cell(6, 2, request.form.get('enquiry_date', datetime.now().strftime('%Y-%m-%d')))
+        safe_set_cell(7, 2, request.form.get('buyer_org', 'Kohinoor Group Pune'))
+        safe_set_cell(8, 2, request.form.get('buyer_contact', 'Purchase Dept'))
+
+        vendor_name = request.form.get('vendor_name', 'Unknown Vendor')
+        vendor_contact = request.form.get('vendor_contact', '')
+        vendor_phone = request.form.get('vendor_phone', '')
+        vendor_email = request.form.get('vendor_email', '')
+        vendor_address = request.form.get('vendor_address', '')
+        comm_remarks = request.form.get('comm_remarks', 'N/A')
+        submitted_rfq = rfq_code
+        
+        safe_set_cell(4, 6, vendor_name)
+        safe_set_cell(5, 6, submitted_rfq)
+        safe_set_cell(6, 6, request.form.get('quotation_date', datetime.now().strftime('%Y-%m-%d')))
+        safe_set_cell(7, 6, request.form.get('gstin', ''))
+        safe_set_cell(8, 6, vendor_contact)
+        safe_set_cell(9, 6, vendor_phone)
+        safe_set_cell(9, 2, vendor_email)
+        safe_set_cell(10, 2, vendor_address)
+        safe_set_cell(32, 5, comm_remarks)
+
+        transport = request.form.get('comm_transport', 'No')
+        gst_rate = request.form.get('gst_rate', '18')
+        
+        safe_set_cell(18, 5, transport)
+        safe_set_cell(19, 5, f'{gst_rate}% GST')
+        safe_set_cell(21, 5, request.form.get('comm_loading', 'Included'))
+        safe_set_cell(22, 5, request.form.get('comm_unloading', 'Included'))
+        safe_set_cell(23, 5, request.form.get('comm_insurance', 'Not Applicable'))
+        safe_set_cell(24, 5, request.form.get('comm_erection', 'Included'))
+        safe_set_cell(25, 5, request.form.get('comm_warranty', '1 Year Standard'))
+        safe_set_cell(26, 5, request.form.get('comm_guarantee', '1 Year Standard'))
+        safe_set_cell(27, 5, request.form.get('comm_supplied', 'Yes'))
+        safe_set_cell(28, 5, request.form.get('comm_delivery', 'Within 7 Days'))
+        safe_set_cell(29, 5, request.form.get('comm_payment', '30 Days Credit'))
+        safe_set_cell(30, 5, request.form.get('comm_validity', '60 Days'))
+
+        for clear_r in range(13, 16):
+            safe_set_cell(clear_r, 2, None)
+            safe_set_cell(clear_r, 4, None)
+            safe_set_cell(clear_r, 5, None)
+            safe_set_cell(clear_r, 6, None)
+            safe_set_cell(clear_r, 7, None)
+            safe_set_cell(clear_r, 8, None)
+
+        descs = request.form.getlist('desc[]')
+        qtys = request.form.getlist('qty[]')
+        units = request.form.getlist('unit[]')
+        brands = request.form.getlist('brand[]')
+        rates = request.form.getlist('rate[]')
+
+        for i in range(len(descs)):
+            r_idx = 13 + i
+            if r_idx > 15:
+                break
+            safe_set_cell(r_idx, 2, descs[i])
+            try:
+                safe_set_cell(r_idx, 4, float(qtys[i]))
+            except:
+                pass
+            safe_set_cell(r_idx, 5, units[i])
+            safe_set_cell(r_idx, 6, brands[i])
+            try:
+                rate_val = float(rates[i])
+                safe_set_cell(r_idx, 7, rate_val)
+                safe_set_cell(r_idx, 8, f"=D{r_idx}*G{r_idx}")
+            except:
+                pass
+
+        safe_set_cell(16, 8, "=SUM(H13:H15)")
+        safe_set_cell(19, 8, "=H16")
+        safe_set_cell(21, 8, "=(H19+H20)*0.18")
+        safe_set_cell(22, 8, "=H19+H20+H21")
+
+        timestamp_str = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        safe_vendor_name = sanitize_filename(vendor_name)
+        safe_rfq_code = sanitize_filename(submitted_rfq)
+        
+        filename = f'RFQ_{safe_vendor_name}_{safe_rfq_code}_{timestamp_str}.xlsx'
+        filepath = os.path.join(VENDOR_SLIPS_DIR, filename)
+        wb.save(filepath)
+        wb.close()
+
+        rebuild_master_database()
+        return render_template(
+            'success.html', rfq_code=submitted_rfq, vendor_name=vendor_name
+        )
+
+    wb.close()
+    return render_template('index.html', rfq_code=rfq_code)
+
+
+@app.route('/purchase-dashboard')
+def purchase_dashboard():
+    raw_slips = [
+        f
+        for f in glob.glob(os.path.join(VENDOR_SLIPS_DIR, '*.xlsx'))
+        if not os.path.basename(f).startswith('~$')
+    ]
+    raw_slips_info = []
+    for f in raw_slips:
+        wb = None
+        try:
+            wb = openpyxl.load_workbook(f, data_only=True)
+            ws = wb.active
+            raw_slips_info.append({
+                'filename': os.path.basename(f),
+                'vendor': ws['F4'].value,
+                'rfq': ws['F5'].value,
+                'date': ws['F6'].value,
+            })
+        except Exception as e:
+            print(f"Error reading slip {os.path.basename(f)}: {e}")
+        finally:
+            if wb:
+                wb.close()
+
+    pool_files = glob.glob(os.path.join(COMPARISON_POOL_DIR, '*.xlsx'))
+    pool_files = [
+        f
+        for f in pool_files
+        if not os.path.basename(f).startswith('Kohinoor_Comparative')
+        and not os.path.basename(f).startswith('~$')
+    ]
+    pool_slips_info = [os.path.basename(f) for f in pool_files]
+
+    comparison_matrix = []
+    for f_path in pool_files:
+        wb = None
+        try:
+            wb = openpyxl.load_workbook(f_path, data_only=True)
+            ws = wb.active
+            vendor_name = ws['F4'].value
+            source_fname = os.path.basename(f_path)
+            for r in range(13, 16):
+                desc = ws.cell(row=r, column=2).value
+                if desc:
+                    qty = ws.cell(row=r, column=4).value or 0
+                    unit = ws.cell(row=r, column=5).value
+                    brand = ws.cell(row=r, column=6).value
+                    rate_r0 = ws.cell(row=r, column=7).value or 0
+                    rate_r1 = ws.cell(row=r, column=8).value or rate_r0
+                    comparison_matrix.append({
+                        'Source_File': source_fname,
+                        'Vendor_Name': vendor_name,
+                        'Material_Description': desc,
+                        'Quantity': qty,
+                        'Unit': unit,
+                        'Brand': brand,
+                        'Rate_R0': rate_r0,
+                        'Rate_R1': rate_r1,
+                    })
+        except Exception as e:
+            print(f"Error reading pool file {os.path.basename(f_path)}: {e}")
+        finally:
+            if wb:
+                wb.close()
+
+    df_master = rebuild_master_database()
+    vendor_summary = []
+    if not df_master.empty and 'GSTIN' in df_master.columns:
+        grouped = df_master.groupby('GSTIN').agg(
+            Vendor_Name=('Vendor_Name', 'first'),
+            Vendor_Phone=('Vendor_Phone', 'first'),
+            Vendor_Email=('Vendor_Email', 'first'),
+            Vendor_Address=('Vendor_Address', 'first'),
+            Total_Quotes=('RFQ_Code', 'nunique'),
+            Total_Quoted_Value=('Basic_Amount', 'sum'),
+            Materials_Supplied=('Material_Description', lambda x: ", ".join(x.unique())),
+            Last_Submission=('Submission_Date', 'max')
+        ).reset_index()
+        vendor_summary = grouped.to_dict(orient='records')
+
+    return render_template(
+        'dashboard.html',
+        raw_slips=raw_slips_info,
+        pool_slips=pool_slips_info,
+        comparison_matrix=comparison_matrix,
+        vendor_summary=vendor_summary
+    )
+
+
+@app.route('/vendor-analytics/<gstin>')
+def vendor_analytics(gstin):
+    df = rebuild_master_database()
+    if df.empty or 'GSTIN' not in df.columns:
+        return "No procurement data available.", 404
+    
+    vendor_df = df[df['GSTIN'] == gstin]
+    if vendor_df.empty:
+        return "Vendor not found in database.", 404
+        
+    vendor_name = vendor_df['Vendor_Name'].iloc[0]
+    total_spend = float(vendor_df['Basic_Amount'].sum())
+    total_quotes = int(vendor_df['RFQ_Code'].nunique())
+    
+    records = vendor_df.to_dict(orient='records')
+    
+    chart_labels = vendor_df['Material_Description'].tolist()
+    chart_rates = vendor_df['Rate_R1'].tolist()
+    chart_qtys = vendor_df['Quantity'].tolist()
+    chart_dates = vendor_df['Submission_Date'].tolist()
+
+    return render_template(
+        'vendor_analytics.html',
+        gstin=gstin,
+        vendor_name=vendor_name,
+        total_spend=total_spend,
+        total_quotes=total_quotes,
+        records=records,
+        chart_labels=chart_labels,
+        chart_rates=chart_rates,
+        chart_qtys=chart_qtys,
+        chart_dates=chart_dates
+    )
+
+
+@app.route('/analytics')
+def analytics():
+    df = rebuild_master_database()
+
+    if not df.empty:
+        df['Basic_Amount'] = pd.to_numeric(
+            df['Basic_Amount'], errors='coerce'
+        ).fillna(0.0)
+        df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0.0)
+        df['Rate_R0'] = pd.to_numeric(df['Rate_R0'], errors='coerce').fillna(0.0)
+        df['Rate_R1'] = pd.to_numeric(df['Rate_R1'], errors='coerce').fillna(0.0)
+
+    total_submissions = df['Source_File'].nunique() if not df.empty else 0
+    total_rfqs = df['RFQ_Code'].nunique() if not df.empty else 0
+    total_materials = df['Material_Description'].nunique() if not df.empty else 0
+    total_quoted_value = f"{df['Basic_Amount'].sum():,.2f}" if not df.empty else '0.00'
+
+    l1_data = []
+    variance_data = []
+    commercial_data = []
+    category_summary = []
+    master_records = df.to_dict(orient='records') if not df.empty else []
+
+    if not df.empty:
+        idx_min = df.groupby(['RFQ_Code', 'Material_Description'])[
+            'Rate_R1'
+        ].idxmin()
+        df_l1 = df.loc[idx_min]
+        l1_data = df_l1.to_dict(orient='records')
+
+        df_var = df.copy()
+        df_var['Min_Rate'] = df_var.groupby(['RFQ_Code', 'Material_Description'])[
+            'Rate_R1'
+        ].transform('min')
+        df_var['Percentage_Difference_From_L1'] = (
+            (df_var['Rate_R1'] - df_var['Min_Rate']) / df_var['Min_Rate']
+        ) * 100 if not df_var['Min_Rate'].eq(0).all() else 0.0
+        variance_data = df_var.to_dict(orient='records')
+
+        df_comm = df[[
+            'Vendor_Name',
+            'RFQ_Code',
+            'Transport',
+            'GST_Term',
+            'Delivery',
+            'Payment_Terms',
+            'Source_File',
+        ]].drop_duplicates(subset=['Source_File'])
+        commercial_data = df_comm.to_dict(orient='records')
+
+        df_cat = (
+            df.groupby('Material_Category')
+            .agg(
+                Total_Spend=('Basic_Amount', 'sum'),
+                Items_Count=('Material_Description', 'count'),
+                Avg_Rate=('Rate_R1', 'mean'),
+                Min_Rate=('Rate_R1', 'min'),
+                Max_Rate=('Rate_R1', 'max'),
+            )
+            .reset_index()
+        )
+        category_summary = df_cat.to_dict(orient='records')
+
+    return render_template(
+        'analytics.html',
+        total_submissions=total_submissions,
+        total_rfqs=total_rfqs,
+        total_materials=total_materials,
+        total_quoted_value=total_quoted_value,
+        l1_data=l1_data,
+        variance_data=variance_data,
+        commercial_data=commercial_data,
+        category_summary=category_summary,
+        master_records=master_records,
+    )
+
+
+@app.route('/move-to-pool', methods=['POST'])
+def move_to_pool():
+    import time
+    filename = request.form.get('filename')
+    src = os.path.join(VENDOR_SLIPS_DIR, filename)
+    dst = os.path.join(COMPARISON_POOL_DIR, filename)
+    if os.path.exists(src):
+        if os.path.exists(dst):
+            for _ in range(3):
+                try:
+                    os.remove(dst)
+                    break
+                except PermissionError:
+                    time.sleep(0.2)
+                except Exception:
+                    break
+        try:
+            shutil.move(src, dst)
+        except PermissionError:
+            shutil.copy(src, dst)
+            for _ in range(3):
+                try:
+                    os.remove(src)
+                    break
+                except PermissionError:
+                    time.sleep(0.2)
+                except Exception:
+                    break
+    rebuild_master_database()
+    return redirect(url_for('purchase_dashboard'))
+
+
+@app.route('/remove-from-pool', methods=['POST'])
+def remove_from_pool():
+    import time
+    filename = request.form.get('filename')
+    dst = os.path.join(COMPARISON_POOL_DIR, filename)
+    if os.path.exists(dst):
+        for _ in range(3):
+            try:
+                os.remove(dst)
+                break
+            except PermissionError:
+                time.sleep(0.2)
+            except Exception:
+                break
+    rebuild_master_database()
+    return redirect(url_for('purchase_dashboard'))
+
+
+@app.route('/update-negotiated-rate', methods=['POST'])
+def update_negotiated_rate():
+    source_file = request.form.get('source_file')
+    material_desc = request.form.get('material_desc', '').strip()
+    try:
+        new_rate_r1 = float(request.form.get('rate_r1', 0))
+    except:
+        new_rate_r1 = 0
+
+    file_path = os.path.join(COMPARISON_POOL_DIR, source_file)
+    if not os.path.exists(file_path):
+        file_path = os.path.join(VENDOR_SLIPS_DIR, source_file)
+
+    if os.path.exists(file_path):
+        wb = None
+        try:
+            wb = openpyxl.load_workbook(file_path)
+            ws = wb.active
+            for r in range(13, 16):
+                cell_val = ws.cell(row=r, column=2).value
+                if cell_val and str(cell_val).strip() == material_desc:
+                    ws.cell(row=r, column=8, value=new_rate_r1)
+                    break
+            wb.save(file_path)
+        except Exception as e:
+            print(f"Error updating rate: {e}")
+        finally:
+            if wb:
+                wb.close()
+
+    rebuild_master_database()
+    return redirect(url_for('purchase_dashboard'))
+
+
+@app.route('/generate-comparison', methods=['POST'])
+def generate_comparison():
+    template_path = TEMPLATE_SHEET
+    if not os.path.exists(template_path):
+        return "<script>alert('Error: Comparison format template sheet missing.'); window.location.href='/purchase-dashboard';</script>", 500
+
+    pool_files = glob.glob(os.path.join(COMPARISON_POOL_DIR, '*.xlsx'))
+    pool_files = [
+        f
+        for f in pool_files
+        if not os.path.basename(f).startswith('Kohinoor_Comparative')
+        and not os.path.basename(f).startswith('~$')
+    ]
+    
+    if len(pool_files) < 2:
+        return "<script>alert('Strict Rule Error: Comparison requires a minimum of 2 vendors (maximum 5). Please add more vendors to the comparison pool.'); window.location.href='/purchase-dashboard';</script>", 400
+    if len(pool_files) > 5:
+        pool_files = pool_files[:5]
+
+    comparison_title = request.form.get('comparison_title', 'General Civil Materials Procurement Comparison')
+    timestamp_code = datetime.now().strftime('%Y%m%d-%H%M%S')
+    unique_comp_code = f'COMP-{timestamp_code}'
+
+    wb = openpyxl.load_workbook(template_path)
+    ws = wb.active
+
+    def safe_set(coord, val):
+        cell = ws[coord]
+        if isinstance(cell, openpyxl.cell.cell.MergedCell):
+            for merged_range in ws.merged_cells.ranges:
+                if coord in merged_range:
+                    ws.cell(row=merged_range.min_row, column=merged_range.min_col, value=val)
+                    return
+        cell.value = val
+
+    project_name = ''
+    tower_name = ''
+    target_rfq_code = 'COMPARATIVE'
+
+    for idx, file_path in enumerate(pool_files):
+        start_col = 5 + (idx * 3)
+        v_wb = None
+        try:
+            v_wb = openpyxl.load_workbook(file_path, data_only=True)
+            v_ws = v_wb.active
+
+            vendor_name = v_ws['F4'].value
+            project_name = v_ws['B4'].value
+            tower_name = v_ws['B5'].value
+            target_rfq_code = v_ws['F5'].value or 'COMPARATIVE'
+
+            ws.cell(row=4, column=start_col, value=vendor_name)
+
+            for i in range(3):
+                v_row = 13 + i
+                target_row = 7 + i
+
+                desc = v_ws.cell(row=v_row, column=2).value
+                qty = v_ws.cell(row=v_row, column=4).value
+                unit = v_ws.cell(row=v_row, column=5).value
+                brand = v_ws.cell(row=v_row, column=6).value
+                rate_r0 = v_ws.cell(row=v_row, column=7).value or 0
+                rate_r1 = v_ws.cell(row=v_row, column=8).value or rate_r0
+
+                if desc:
+                    ws.cell(row=target_row, column=2, value=desc)
+                    ws.cell(row=target_row, column=3, value=qty)
+                    ws.cell(row=target_row, column=4, value=unit)
+                    ws.cell(row=5, column=start_col, value=brand)
+                    ws.cell(row=target_row, column=start_col, value=rate_r0)
+                    ws.cell(row=target_row, column=start_col + 1, value=rate_r1)
+
+            ws.cell(row=13, column=start_col, value=v_ws['E18'].value)
+            ws.cell(row=14, column=start_col, value=v_ws['E19'].value)
+            ws.cell(row=16, column=start_col, value=v_ws['E27'].value)
+            ws.cell(row=17, column=start_col, value=v_ws['E21'].value)
+            ws.cell(row=18, column=start_col, value=v_ws['E23'].value)
+            ws.cell(row=19, column=start_col, value=v_ws['E22'].value)
+            ws.cell(row=20, column=start_col, value=v_ws['E24'].value)
+            ws.cell(row=21, column=start_col, value=v_ws['E25'].value)
+            ws.cell(row=22, column=start_col, value=v_ws['E26'].value)
+            ws.cell(row=23, column=start_col, value=v_ws['E27'].value)
+            ws.cell(row=24, column=start_col, value=v_ws['E28'].value or v_ws['E22'].value)
+            ws.cell(row=25, column=start_col, value=v_ws['E29'].value or v_ws['E23'].value)
+            ws.cell(row=26, column=start_col, value=v_ws['E30'].value)
+        finally:
+            if v_wb:
+                v_wb.close()
+
+    safe_set('B1', f"Comparison Subject: {comparison_title}")
+    safe_set('L1', f"Tracking Code: {unique_comp_code}")
+    ws['B2'] = project_name
+    ws['B3'] = tower_name
+    ws['L2'] = datetime.now().strftime('%Y-%m-%d')
+    ws['L3'] = 'Purchase Dept (Automated)'
+
+    safe_target_rfq = sanitize_filename(target_rfq_code)
+    version_num = 1
+    while True:
+        output_filename = f'Kohinoor_Comparative_{safe_target_rfq}_{unique_comp_code}_V{version_num}.xlsx'
+        output_path = os.path.join(COMPARISON_POOL_DIR, output_filename)
+        if not os.path.exists(output_path):
+            break
+        version_num += 1
+
+    wb.save(output_path)
+    wb.close()
+    rebuild_master_database()
+    return send_file(output_path, as_attachment=True)
+
+
+if __name__ == '__main__':
+    init_db()
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=True)

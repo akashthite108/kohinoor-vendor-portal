@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kohinoor Group - Advanced Procurement & Business Analytics</title>
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --primary-hover: #1e40af;
+            --success: #16a34a;
+            --success-bg: #dcfce7;
+            --danger: #dc2626;
+            --analytics: #059669;
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-main: #1f2937;
+            --text-muted: #6b7280;
+            --border-color: #e5e7eb;
+        }
+        
+        body { 
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif; 
+            background: var(--bg-color); 
+            margin: 0; 
+            padding: 30px; 
+            color: var(--text-main); 
+        }
+        
+        .container { 
+            max-width: 1350px; 
+            margin: auto; 
+            background: var(--card-bg); 
+            padding: 35px; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); 
+            border-top: 4px solid var(--primary);
+        }
+        
+        .header-flex {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 20px;
+            margin-bottom: 25px;
+        }
+        
+        h1 { color: var(--primary); font-size: 22px; margin: 0; font-weight: 700; }
+        
+        /* KPI Cards Grid */
+        .card-container { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); 
+            gap: 20px; 
+            margin-bottom: 30px;
+        }
+        .card { 
+            background: #f8fafc; 
+            border: 1px solid var(--border-color);
+            border-left: 4px solid var(--primary); 
+            padding: 20px; 
+            border-radius: 6px; 
+        }
+        .card h3 { margin: 0 0 6px 0; color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .card p { margin: 0; font-size: 22px; font-weight: 700; color: var(--primary); }
+        
+        /* Tab Navigation Bar */
+        .tab-bar {
+            display: flex;
+            gap: 10px;
+            border-bottom: 2px solid var(--border-color);
+            margin-bottom: 25px;
+            padding-bottom: 0;
+        }
+        .tab-btn {
+            background: #f1f5f9;
+            border: 1px solid var(--border-color);
+            border-bottom: none;
+            padding: 10px 20px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-top-left-radius: 6px;
+            border-top-right-radius: 6px;
+            transition: all 0.2s;
+        }
+        .tab-btn:hover { background: #e2e8f0; color: var(--text-main); }
+        .tab-btn.active {
+            background: #ffffff;
+            color: var(--primary);
+            border-color: var(--border-color);
+            border-bottom: 2px solid #ffffff;
+            margin-bottom: -2px;
+        }
+
+        /* Tab Content Panes */
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .section { 
+            background: #ffffff;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 20px;
+            margin-bottom: 25px; 
+        }
+        .section h2 { font-size: 15px; color: var(--primary); margin-top: 0; margin-bottom: 15px; font-weight: 600; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 5px; }
+        th, td { border-bottom: 1px solid var(--border-color); padding: 10px 14px; text-align: left; }
+        th { background-color: #f8fafc; color: #475569; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; }
+        tr:hover { background-color: #f8fafc; }
+        
+        .btn { 
+            background: #2563eb; color: white; border: none; padding: 8px 16px; border-radius: 6px; 
+            cursor: pointer; font-weight: 600; font-size: 13px; text-decoration: none; display: inline-flex;
+            align-items: center; gap: 6px;
+        }
+        .btn:hover { background: var(--primary-hover); }
+        
+        .badge-rfq { font-family: monospace; background: #f1f5f9; color: var(--primary); padding: 2px 6px; border-radius: 4px; font-size: 11px; border: 1px solid #cbd5e1; }
+        .badge-l1 { background: #dcfce7; color: #166534; padding: 3px 8px; border-radius: 4px; font-weight: 600; }
+        .badge-diff-high { background: #fee2e2; color: #991b1b; padding: 3px 8px; border-radius: 4px; font-weight: 600; }
+        .badge-diff-zero { background: #dcfce7; color: #166534; padding: 3px 8px; border-radius: 4px; font-weight: 600; }
+        .empty-text { color: var(--text-muted); font-style: italic; font-size: 13px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header-flex">
+            <h1>Kohinoor Group - Advanced Procurement Analytics</h1>
+            <a href="/purchase-dashboard" class="btn">⬅ Back to Purchase Dashboard</a>
+        </div>
+
+        <!-- Summary KPI Cards -->
+        <div class="card-container">
+            <div class="card">
+                <h3>Total Quotations Logged</h3>
+                <p>{{ total_submissions }}</p>
+            </div>
+            <div class="card">
+                <h3>Unique RFQ Codes Tracked</h3>
+                <p>{{ total_rfqs }}</p>
+            </div>
+            <div class="card">
+                <h3>Active Materials Monitored</h3>
+                <p>{{ total_materials }}</p>
+            </div>
+            <div class="card">
+                <h3>Total Quoted Value (R0)</h3>
+                <p>₹{{ total_quoted_value }}</p>
+            </div>
+        </div>
+
+        <!-- Interactive Tab Navigation -->
+        <div class="tab-bar">
+            <button class="tab-btn active" onclick="switchTab(event, 'tab-l1')">🏆 L1 Benchmarking & Category Spend</button>
+            <button class="tab-btn" onclick="switchTab(event, 'tab-variance')">📈 Price Variance Analysis</button>
+            <button class="tab-btn" onclick="switchTab(event, 'tab-commercial')">🤝 Commercial Terms</button>
+            <button class="tab-btn" onclick="switchTab(event, 'tab-audit')">📜 Master Audit Log</button>
+        </div>
+
+        <!-- TAB 1: L1 Benchmarking & Category Spend -->
+        <div id="tab-l1" class="tab-content active">
+            <div class="section">
+                <h2>1. L1 (Lowest Rate) Benchmarking & Savings Potential</h2>
+                {% if l1_data %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>RFQ Code</th>
+                            <th>Material Description</th>
+                            <th>Lowest Rate (L1)</th>
+                            <th>Winning Vendor</th>
+                            <th>Brand Offered</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in l1_data %}
+                        <tr>
+                            <td><span class="badge-rfq">{{ row.RFQ_Code.split(']')[0] if ']' in row.RFQ_Code|string else row.RFQ_Code }}</span></td>
+                            <td><b>{{ row.Material_Description }}</b></td>
+                            <td><span class="badge-l1">₹{{ row.Rate_R0 }}</span></td>
+                            <td><b>{{ row.Vendor_Name }}</b></td>
+                            <td>{{ row.Brand }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="empty-text">No benchmark data available.</p>
+                {% endif %}
+            </div>
+
+            <div class="section">
+                <h2>2. Material Category Spend & Price Benchmarks</h2>
+                {% if category_summary %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Material Category</th>
+                            <th>Total Quoted Spend</th>
+                            <th>Items Count</th>
+                            <th>Avg Rate</th>
+                            <th>Min Rate</th>
+                            <th>Max Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cat in category_summary %}
+                        <tr>
+                            <td><b>{{ cat.Material_Category }}</b></td>
+                            <td>₹{{ "{:,.2f}".format(cat.Total_Spend) }}</td>
+                            <td>{{ cat.Items_Count }}</td>
+                            <td>₹{{ "{:,.2f}".format(cat.Avg_Rate) }}</td>
+                            <td><span class="badge-l1">₹{{ cat.Min_Rate }}</span></td>
+                            <td>₹{{ cat.Max_Rate }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="empty-text">No category data available.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- TAB 2: Price Variance Analysis -->
+        <div id="tab-variance" class="tab-content">
+            <div class="section">
+                <h2>Price Variance Analysis (% Increase over L1 Baseline)</h2>
+                {% if variance_data %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>RFQ Code</th>
+                            <th>Vendor Name</th>
+                            <th>Material Description</th>
+                            <th>Quoted Rate</th>
+                            <th>L1 Baseline Rate</th>
+                            <th>Variance (% vs L1)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in variance_data %}
+                        <tr>
+                            <td><span class="badge-rfq">{{ row.RFQ_Code.split(']')[0] if ']' in row.RFQ_Code|string else row.RFQ_Code }}</span></td>
+                            <td><b>{{ row.Vendor_Name }}</b></td>
+                            <td>{{ row.Material_Description }}</td>
+                            <td>₹{{ row.Rate_R0 }}</td>
+                            <td>₹{{ row.Min_Rate }}</td>
+                            <td>
+                                {% if row.Percentage_Difference_From_L1 == 0 %}
+                                    <span class="badge-diff-zero">0.0% (L1)</span>
+                                {% else %}
+                                    <span class="badge-diff-high">+{{ "%.2f"|format(row.Percentage_Difference_From_L1) }}%</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="empty-text">No variance data available.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- TAB 3: Commercial Terms -->
+        <div id="tab-commercial" class="tab-content">
+            <div class="section">
+                <h2>Commercial Terms & Logistics Comparison</h2>
+                {% if commercial_data %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Vendor Name</th>
+                            <th>RFQ Code</th>
+                            <th>Transport Term</th>
+                            <th>GST Terms</th>
+                            <th>Delivery Timeline</th>
+                            <th>Payment Terms</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in commercial_data %}
+                        <tr>
+                            <td><b>{{ row.Vendor_Name }}</b></td>
+                            <td><span class="badge-rfq">{{ row.RFQ_Code.split(']')[0] if ']' in row.RFQ_Code|string else row.RFQ_Code }}</span></td>
+                            <td>{{ row.Transport }}</td>
+                            <td>{{ row.GST_Term }}</td>
+                            <td>{{ row.Delivery }}</td>
+                            <td>{{ row.Payment_Terms }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="empty-text">No commercial terms recorded.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- TAB 4: Master Audit Log -->
+        <div id="tab-audit" class="tab-content">
+            <div class="section">
+                <h2>Master Item-Level Quotation History Log</h2>
+                {% if master_records %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>RFQ Code</th>
+                            <th>Vendor</th>
+                            <th>Material</th>
+                            <th>Qty</th>
+                            <th>Unit</th>
+                            <th>Brand</th>
+                            <th>Rate (R0)</th>
+                            <th>Basic Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for rec in master_records %}
+                        <tr>
+                            <td>{{ rec.Submission_Date }}</td>
+                            <td><span class="badge-rfq">{{ rec.RFQ_Code.split(']')[0] if ']' in rec.RFQ_Code|string else rec.RFQ_Code }}</span></td>
+                            <td><b>{{ rec.Vendor_Name }}</b></td>
+                            <td>{{ rec.Material_Description }}</td>
+                            <td>{{ rec.Quantity }}</td>
+                            <td>{{ rec.Unit }}</td>
+                            <td>{{ rec.Brand }}</td>
+                            <td>₹{{ rec.Rate_R0 }}</td>
+                            <td>₹{{ "{:,.2f}".format(rec.Basic_Amount) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="empty-text">Master logs are empty.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function switchTab(evt, tabId) {
+            // Hide all tab contents
+            const contents = document.getElementsByClassName("tab-content");
+            for (let i = 0; i < contents.length; i++) {
+                contents[i].classList.remove("active");
+            }
+            // Remove active class from all buttons
+            const buttons = document.getElementsByClassName("tab-btn");
+            for (let i = 0; i < buttons.length; i++) {
+                buttons[i].classList.remove("active");
+            }
+            // Show current tab and add active class to button
+            document.getElementById(tabId).classList.add("active");
+            evt.currentTarget.classList.add("active");
+        }
+    </script>
+</body>
+</html>

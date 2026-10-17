@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kohinoor Group - Purchase & Vendor Management Portal</title>
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --primary-hover: #1d4ed8;
+            --success: #15803d;
+            --success-bg: #f0fdf4;
+            --danger: #b91c1c;
+            --danger-bg: #fef2f2;
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --border-color: #e2e8f0;
+        }
+        
+        body { 
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+            background: var(--bg-color); 
+            margin: 0; 
+            padding: 30px; 
+            color: var(--text-main); 
+        }
+        
+        .container { 
+            max-width: 1250px; 
+            margin: auto; 
+            background: var(--card-bg); 
+            padding: 30px; 
+            border-radius: 6px; 
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06); 
+            border-top: 4px solid var(--primary);
+        }
+        
+        .header-flex {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 15px;
+            margin-bottom: 25px;
+        }
+        
+        h1 { color: var(--primary); font-size: 20px; margin: 0; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+        .subtitle { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+        h2 { color: var(--text-main); font-size: 15px; margin: 0 0 12px 0; font-weight: 600; border-left: 3px solid var(--primary); padding-left: 8px; }
+        
+        .section { 
+            background: #ffffff;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 20px;
+            margin-bottom: 25px; 
+        }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+        th, td { border-bottom: 1px solid var(--border-color); padding: 10px 12px; text-align: left; }
+        th { background-color: #f8fafc; color: #475569; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; }
+        tr:hover { background-color: #f8fafc; }
+        
+        .badge-rfq {
+            font-family: monospace;
+            background: #f1f5f9;
+            color: var(--primary);
+            padding: 3px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 600;
+            border: 1px solid var(--border-color);
+        }
+
+        .file-tag {
+            font-family: monospace;
+            background: #f8fafc;
+            color: #334155;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            border: 1px solid #cbd5e1;
+            display: inline-block;
+            max-width: 220px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            vertical-align: middle;
+        }
+
+        .btn { 
+            background: var(--primary); color: white; border: none; padding: 6px 12px; border-radius: 4px; 
+            cursor: pointer; font-weight: 600; font-size: 12px; text-decoration: none; display: inline-flex;
+            align-items: center; gap: 5px;
+        }
+        .btn:hover { background: var(--primary-hover); }
+        .btn-danger { background: var(--danger); }
+        .btn-danger:hover { background: #991b1b; }
+        .btn-success { background: var(--success); padding: 10px 20px; font-size: 13px; border-radius: 4px; width: 100%; justify-content: center; }
+        .btn-success:hover { background: #166534; }
+        
+        .btn-analytics { 
+            background: #0f766e; padding: 8px 14px; font-size: 12px; color: white; 
+            border-radius: 4px; font-weight: 600; text-decoration: none; display: inline-flex;
+            align-items: center; gap: 6px; 
+        }
+        .btn-analytics:hover { background: #115e59; }
+        
+        .empty-state { color: var(--text-muted); font-style: italic; margin: 8px 0 0 0; font-size: 13px; }
+        .action-bar { margin-top: 15px; }
+        .input-r1 { width: 85px; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px; font-weight: 600; color: var(--success); font-size: 13px; text-align: right; }
+        
+        .form-control {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 13px;
+            box-sizing: border-box;
+            margin-top: 5px;
+            margin-bottom: 12px;
+        }
+        .form-control:focus { outline: none; border-color: var(--primary); }
+        .form-label { font-weight: 600; color: var(--text-main); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+        .alert-info-box { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 10px 14px; border-radius: 4px; margin-bottom: 12px; font-size: 12px; color: #166534; }
+        .status-pill { background: var(--success-bg); color: var(--success); padding: 2px 8px; border-radius: 10px; font-weight: 600; font-size: 11px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header-flex">
+            <div>
+                <h1>Kohinoor Group</h1>
+                <div class="subtitle">Purchase & Vendor Management Portal</div>
+            </div>
+            <a href="/analytics" class="btn-analytics">📊 View Analytics & L1 Insights</a>
+        </div>
+
+        <!-- Section 1: Raw Vendor Submissions -->
+        <div class="section">
+            <h2>Incoming Vendor Submissions Inbox</h2>
+            {% if raw_slips %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Vendor Name</th>
+                        <th>RFQ Code</th>
+                        <th>Submission Date</th>
+                        <th>File Record</th>
+                        <th style="text-align: right;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for slip in raw_slips %}
+                    <tr>
+                        <td><b>{{ slip.vendor }}</b></td>
+                        <td><span class="badge-rfq">{{ slip.rfq }}</span></td>
+                        <td>{{ slip.date }}</td>
+                        <td>
+                            <span class="file-tag" title="{{ slip.filename }}">
+                                {{ slip.filename.split('_')[1] if '_' in slip.filename else slip.filename[:20] }}...xlsx
+                            </span>
+                        </td>
+                        <td style="text-align: right;">
+                            <form action="/move-to-pool" method="POST" style="display:inline;">
+                                <input type="hidden" name="filename" value="{{ slip.filename }}">
+                                <button type="submit" class="btn">Move to Pool ➔</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="empty-state">No pending vendor submissions in the inbox.</p>
+            {% endif %}
+        </div>
+
+        <!-- Section 2: Comparison Pool & Unified Generation Form -->
+        <div class="section">
+            <h2>Active Comparison Pool (2 to 5 Vendors)</h2>
+            {% if pool_slips %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Selected Vendor File</th>
+                        <th style="text-align: right;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for file in pool_slips %}
+                    <tr>
+                        <td>
+                            <span class="file-tag" style="max-width: 100%;" title="{{ file }}">
+                                {{ file }}
+                            </span>
+                        </td>
+                        <td style="text-align: right;">
+                            <form action="/remove-from-pool" method="POST" style="display:inline;">
+                                <input type="hidden" name="filename" value="{{ file }}">
+                                <button type="submit" class="btn btn-danger">Remove</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <div class="action-bar">
+                <form action="/generate-comparison" method="POST" style="background: #f8fafc; border: 1px solid var(--border-color); padding: 15px; border-radius: 6px; margin-top: 15px;">
+                    <div class="alert-info-box">
+                        <b>Rule:</b> Select 2 to 5 vendors in the active pool, review/negotiate rates (R1) below, and assign a comparison batch title.
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label for="comparison_title" class="form-label">Comparison Title / Purpose:</label>
+                        <input type="text" class="form-control" id="comparison_title" name="comparison_title" placeholder="e.g., AAC Blocks Procurement - Tower 1" required>
+                    </div>
+                    <button type="submit" class="btn btn-success">Generate & Download Versioned Statement</button>
+                </form>
+            </div>
+            {% else %}
+            <p class="empty-state">Comparison pool is empty. Move at least 2 vendor slips from the inbox above.</p>
+            {% endif %}
+        </div>
+
+        <!-- Section 3: Live Comparison & R1 Negotiation Matrix -->
+        <div class="section">
+            <h2>Live Price Comparison & R1 Negotiation Matrix</h2>
+            {% if comparison_matrix %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Vendor Name</th>
+                        <th>Material Description</th>
+                        <th>Qty</th>
+                        <th>Brand</th>
+                        <th>Quoted Rate (R0)</th>
+                        <th>Negotiated Rate (R1)</th>
+                        <th style="text-align: right;">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in comparison_matrix %}
+                    <tr>
+                        <td><b>{{ row.Vendor_Name }}</b></td>
+                        <td>{{ row.Material_Description }}</td>
+                        <td>{{ row.Quantity }} {{ row.Unit }}</td>
+                        <td>{{ row.Brand }}</td>
+                        <td>₹{{ "%.2f"|format(row.Rate_R0|float) }}</td>
+                        <td>
+                            <form action="/update-negotiated-rate" method="POST" style="display:inline; display:flex; gap:6px; align-items:center;">
+                                <input type="hidden" name="source_file" value="{{ row.Source_File }}">
+                                <input type="hidden" name="material_desc" value="{{ row.Material_Description }}">
+                                <input type="number" step="0.01" name="rate_r1" value="{{ row.Rate_R1 }}" class="input-r1">
+                                <button type="submit" class="btn" style="padding: 5px 10px; font-size: 11px;">Save</button>
+                            </form>
+                        </td>
+                        <td style="text-align: right;"><span class="status-pill">Active</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="empty-state">Add vendor slips to the comparison pool to manage negotiations here.</p>
+            {% endif %}
+        </div>
+
+        <!-- Section 4: Master Vendor Directory & GSTIN Analytics -->
+        <div class="section">
+            <h2>🏢 Master Vendor Directory & GSTIN Analytics</h2>
+            <div style="margin-bottom: 15px;">
+                <input type="text" id="vendorSearchInput" class="form-control" placeholder="🔍 Type to search vendor by GSTIN code or company name..." onkeyup="filterVendors()">
+            </div>
+            
+            {% if vendor_summary %}
+            <table id="vendorTable">
+                <thead>
+                    <tr>
+                        <th>Vendor GSTIN (Code)</th>
+                        <th>Legal Company Name</th>
+                        <th>Total Quotations</th>
+                        <th>Cumulative Quoted Value</th>
+                        <th>Materials Offered</th>
+                        <th>Last Active</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for v in vendor_summary %}
+                    <tr>
+                        <td><a href="/vendor-analytics/{{ v.GSTIN }}" class="badge-rfq" style="text-decoration: none;" title="Click for Vendor Visual Analytics">{{ v.GSTIN }}</a></td>
+                        <td><b>{{ v.Vendor_Name }}</b></td>
+                        <td><span class="status-pill">{{ v.Total_Quotes }} Quotes</span></td>
+                        <td style="font-weight: 600; color: var(--primary);">₹{{ "{:,.2f}".format(v.Total_Quoted_Value) }}</td>
+                        <td style="font-size: 12px; color: var(--text-muted);">{{ v.Materials_Supplied }}</td>
+                        <td>{{ v.Last_Submission }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="empty-state">No vendor analytics records generated yet. Submit quotations to populate this ledger.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        function filterVendors() {
+            let input = document.getElementById('vendorSearchInput');
+            let filter = input.value.toUpperCase();
+            let table = document.getElementById('vendorTable');
+            if (!table) return;
+            let tr = table.getElementsByTagName('tr');
+
+            for (let i = 1; i < tr.length; i++) {
+                let tdGstin = tr[i].getElementsByTagName('td')[0];
+                let tdName = tr[i].getElementsByTagName('td')[1];
+                if (tdGstin || tdName) {
+                    let gstinText = tdGstin.textContent || tdGstin.innerText;
+                    let nameText = tdName.textContent || tdName.innerText;
+                    if (gstinText.toUpperCase().indexOf(filter) > -1 || nameText.toUpperCase().indexOf(filter) > -1) {
+                        tr[i].style.display = "";
+                    } else {
+                        tr[i].style.display = "none";
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>
