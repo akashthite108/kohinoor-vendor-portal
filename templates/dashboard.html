@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kohinoor Group - Purchase & Vendor Management Portal</title>
+    <title>Kohinoor & Planedge Group - Purchase & Vendor Management Portal</title>
     <style>
         :root {
             --primary: #1e3a8a;
@@ -98,6 +98,8 @@
         .btn:hover { background: var(--primary-hover); }
         .btn-danger { background: var(--danger); }
         .btn-danger:hover { background: #991b1b; }
+        .btn-secondary { background: #475569; }
+        .btn-secondary:hover { background: #334155; }
         .btn-success { background: var(--success); padding: 10px 20px; font-size: 13px; border-radius: 4px; width: 100%; justify-content: center; }
         .btn-success:hover { background: #166534; }
         
@@ -126,16 +128,25 @@
         .form-label { font-weight: 600; color: var(--text-main); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
         .alert-info-box { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 10px 14px; border-radius: 4px; margin-bottom: 12px; font-size: 12px; color: #166534; }
         .status-pill { background: var(--success-bg); color: var(--success); padding: 2px 8px; border-radius: 10px; font-weight: 600; font-size: 11px; }
+
+        @media print {
+            .btn, button, .no-print { display: none !important; }
+            body { background: white; color: black; padding: 0; }
+            .container { box-shadow: none; border: none; padding: 0; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header-flex">
             <div>
-                <h1>Kohinoor Group</h1>
+                <h1>Kohinoor & Planedge Group</h1>
                 <div class="subtitle">Purchase & Vendor Management Portal</div>
             </div>
-            <a href="/analytics" class="btn-analytics">📊 View Analytics & L1 Insights</a>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <button onclick="window.print()" class="btn no-print">🖨️ Export PDF</button>
+                <a href="/analytics" class="btn-analytics">📊 View Analytics & L1 Insights</a>
+            </div>
         </div>
 
         <!-- Section 1: Raw Vendor Submissions -->
@@ -163,10 +174,14 @@
                                 {{ slip.filename.split('_')[1] if '_' in slip.filename else slip.filename[:20] }}...xlsx
                             </span>
                         </td>
-                        <td style="text-align: right;">
+                        <td style="text-align: right; display: flex; gap: 6px; justify-content: flex-end; align-items: center;">
                             <form action="/move-to-pool" method="POST" style="display:inline;">
                                 <input type="hidden" name="filename" value="{{ slip.filename }}">
                                 <button type="submit" class="btn">Move to Pool ➔</button>
+                            </form>
+                            <form action="/archive-submission" method="POST" style="display:inline;">
+                                <input type="hidden" name="filename" value="{{ slip.filename }}">
+                                <button type="submit" class="btn btn-secondary" style="padding: 6px 10px; font-size: 11px;" onclick="return confirm('Archive this submission? It will be moved out of the active inbox.');">Archive 📁</button>
                             </form>
                         </td>
                     </tr>

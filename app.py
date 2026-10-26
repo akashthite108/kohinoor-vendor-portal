@@ -10,7 +10,6 @@ import pandas as pd
 
 app = Flask(__name__)
 
-# Define absolute base directory to prevent file-not-found errors on Render/local
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SUBMISSIONS_DIR = os.path.join(BASE_DIR, 'submissions')
@@ -19,28 +18,36 @@ COMPARISON_POOL_DIR = os.path.join(BASE_DIR, 'comparison_pool')
 MASTER_DB_CSV = os.path.join(BASE_DIR, 'master_procurement_database.csv')
 STAGING_LOG_PATH = os.path.join(BASE_DIR, 'master_staging_log.csv')
 
-# Automatically create necessary folders on app startup
 for directory in [SUBMISSIONS_DIR, VENDOR_SLIPS_DIR, COMPARISON_POOL_DIR]:
     os.makedirs(directory, exist_ok=True)
 
 TEMPLATE_SHEET = 'Comparision Format Sheet.xlsx'
+ACTIVE_RFQ_TEMPLATE = 'RFQ.xlx.xlsx'
 
 
 def sanitize_filename(name):
-    """Removes invalid filesystem characters, brackets, and URLs from filenames."""
     if not name:
         return "unknown"
     return re.sub(r'[^\w\-_.]', '_', str(name))
 
 
+def robust_remove(filepath):
+    import time
+    for _ in range(5):
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            break
+        except PermissionError:
+            time.sleep(0.3)
+        except Exception:
+            break
+
+
 def init_db():
     if not os.path.exists(STAGING_LOG_PATH):
         df = pd.DataFrame(columns=[
-            'Timestamp',
-            'RFQ_Code',
-            'Vendor_Name',
-            'GSTIN',
-            'File_Path',
+            'Timestamp', 'RFQ_Code', 'Vendor_Name', 'GSTIN', 'File_Path',
         ])
         df.to_csv(STAGING_LOG_PATH, index=False)
     rebuild_master_database()
@@ -60,21 +67,19 @@ def assign_category(desc):
         return 'General Civil Works'
 
 
+def get_boq_rows(ws):
+    """Dynamically scans and returns all BOQ item rows (13 to 17)."""
+    boq_rows = []
+    for r in range(13, 18):
+        desc = ws.cell(row=r, column=2).value
+        if desc and str(desc).strip() and not str(desc).startswith("TOTAL"):
+            boq_rows.append(r)
+    return boq_rows
+
+
 def rebuild_master_database():
-    slips = [
-        f
-        for f in glob.glob(os.path.join(VENDOR_SLIPS_DIR, '*.xlsx'))
-        if os.path.basename(f).startswith('RFQ_')
-        and '_Filled_' not in os.path.basename(f)
-        and not os.path.basename(f).startswith('~$')
-    ]
-    pool_slips = [
-        f
-        for f in glob.glob(os.path.join(COMPARISON_POOL_DIR, '*.xlsx'))
-        if os.path.basename(f).startswith('RFQ_')
-        and not os.path.basename(f).startswith('Kohinoor_Comparative')
-        and not os.path.basename(f).startswith('~$')
-    ]
+    slips = [f for f in glob.glob(os.path.join(VENDOR_SLIPS_DIR, '*.xlsx')) if os.path.basename(f).startswith('RFQ_') and not os.path.basename(f).startswith('~$')]
+    pool_slips = [f for f in glob.glob(os.path.join(COMPARISON_POOL_DIR, '*.xlsx')) if os.path.basename(f).startswith('RFQ_') and not os.path.basename(f).startswith('Kohinoor_Comparative') and not os.path.basename(f).startswith('~$')]
 
     all_slips = list(set(slips + pool_slips))
     records = []
@@ -95,19 +100,19 @@ def rebuild_master_database():
             submission_date = ws['F6'].value
             gstin = ws['F7'].value
             vendor_contact = ws['F8'].value
-            vendor_phone = ws['F9'].value
-            vendor_email = ws['B9'].value
-            vendor_address = ws['B10'].value
+            vendor_phone = ws.cell(row=9, column=6).value or 'N/A'
+            vendor_email = ws.cell(row=9, column=2).value or 'N/A'
+            vendor_address = ws.cell(row=10, column=2).value or 'N/A'
             project = ws['B4'].value
             tower = ws['B5'].value
 
-            transport_term = ws['E18'].value
-            gst_term = ws['E19'].value
-            delivery_timeline = ws['E28'].value
-            payment_terms = ws['E29'].value
-            remarks = ws['E32'].value or 'N/A'
+            transport_term = ws['E22'].value or 'No'
+            gst_term = ws['E23'].value or '18% GST'
+            delivery_timeline = ws['E32'].value or 'Within 7 Days'
+            payment_terms = ws['E33'].value or '30 Days Credit'
+            remarks = ws['E35'].value or 'N/A'
 
-            for r in range(13, 16):
+            for r in get_boq_rows(ws):
                 desc = ws.cell(row=r, column=2).value
                 if desc:
                     try:
@@ -164,9 +169,7 @@ def rebuild_master_database():
         df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0.0)
         df['Rate_R0'] = pd.to_numeric(df['Rate_R0'], errors='coerce').fillna(0.0)
         df['Rate_R1'] = pd.to_numeric(df['Rate_R1'], errors='coerce').fillna(0.0)
-        df['Basic_Amount'] = pd.to_numeric(
-            df['Basic_Amount'], errors='coerce'
-        ).fillna(0.0)
+        df['Basic_Amount'] = pd.to_numeric(df['Basic_Amount'], errors='coerce').fillna(0.0)
     else:
         df = pd.DataFrame(columns=[
             'Submission_Date', 'RFQ_Code', 'Project', 'Tower', 'Vendor_Name', 'GSTIN',
@@ -188,16 +191,10 @@ def vendor_portal():
     else:
         rfq_code = f"RFQ-{uuid.uuid4().hex[:6].upper()}"
 
-    active_template = None
-    for candidate in ['RFQ.xlsx', 'RFQ.xlx.xlsx', 'RFQ_Master_Template.xlsx']:
-        if os.path.exists(candidate):
-            active_template = candidate
-            break
+    if not os.path.exists(ACTIVE_RFQ_TEMPLATE):
+        return f'Error: RFQ template {ACTIVE_RFQ_TEMPLATE} missing on server.', 500
 
-    if not active_template:
-        return 'Error: RFQ template missing on server.', 500
-
-    wb = openpyxl.load_workbook(active_template)
+    wb = openpyxl.load_workbook(ACTIVE_RFQ_TEMPLATE)
     ws = wb.active
 
     def safe_set_cell(row_num, col_num, val):
@@ -235,25 +232,22 @@ def vendor_portal():
         safe_set_cell(9, 6, vendor_phone)
         safe_set_cell(9, 2, vendor_email)
         safe_set_cell(10, 2, vendor_address)
-        safe_set_cell(32, 5, comm_remarks)
+        safe_set_cell(35, 5, comm_remarks)
 
-        transport = request.form.get('comm_transport', 'No')
-        gst_rate = request.form.get('gst_rate', '18')
-        
-        safe_set_cell(18, 5, transport)
-        safe_set_cell(19, 5, f'{gst_rate}% GST')
-        safe_set_cell(21, 5, request.form.get('comm_loading', 'Included'))
-        safe_set_cell(22, 5, request.form.get('comm_unloading', 'Included'))
-        safe_set_cell(23, 5, request.form.get('comm_insurance', 'Not Applicable'))
-        safe_set_cell(24, 5, request.form.get('comm_erection', 'Included'))
-        safe_set_cell(25, 5, request.form.get('comm_warranty', '1 Year Standard'))
-        safe_set_cell(26, 5, request.form.get('comm_guarantee', '1 Year Standard'))
-        safe_set_cell(27, 5, request.form.get('comm_supplied', 'Yes'))
-        safe_set_cell(28, 5, request.form.get('comm_delivery', 'Within 7 Days'))
-        safe_set_cell(29, 5, request.form.get('comm_payment', '30 Days Credit'))
-        safe_set_cell(30, 5, request.form.get('comm_validity', '60 Days'))
+        safe_set_cell(22, 5, request.form.get('comm_transport', 'No'))
+        safe_set_cell(23, 5, request.form.get('gst_rate', '18% GST'))
+        safe_set_cell(25, 5, request.form.get('comm_loading', 'Included'))
+        safe_set_cell(26, 5, request.form.get('comm_unloading', 'Included'))
+        safe_set_cell(27, 5, request.form.get('comm_insurance', 'Not Applicable'))
+        safe_set_cell(28, 5, request.form.get('comm_erection', 'Included'))
+        safe_set_cell(29, 5, request.form.get('comm_warranty', '1 Year Standard'))
+        safe_set_cell(30, 5, request.form.get('comm_guarantee', '1 Year Standard'))
+        safe_set_cell(31, 5, request.form.get('comm_supplied', 'Yes'))
+        safe_set_cell(32, 5, request.form.get('comm_delivery', 'Within 7 Days'))
+        safe_set_cell(33, 5, request.form.get('comm_payment', '30 Days Credit'))
+        safe_set_cell(34, 5, request.form.get('comm_validity', '60 Days'))
 
-        for clear_r in range(13, 16):
+        for clear_r in range(13, 18):
             safe_set_cell(clear_r, 2, None)
             safe_set_cell(clear_r, 4, None)
             safe_set_cell(clear_r, 5, None)
@@ -269,7 +263,7 @@ def vendor_portal():
 
         for i in range(len(descs)):
             r_idx = 13 + i
-            if r_idx > 15:
+            if r_idx > 17:
                 break
             safe_set_cell(r_idx, 2, descs[i])
             try:
@@ -285,11 +279,6 @@ def vendor_portal():
             except:
                 pass
 
-        safe_set_cell(16, 8, "=SUM(H13:H15)")
-        safe_set_cell(19, 8, "=H16")
-        safe_set_cell(21, 8, "=(H19+H20)*0.18")
-        safe_set_cell(22, 8, "=H19+H20+H21")
-
         timestamp_str = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         safe_vendor_name = sanitize_filename(vendor_name)
         safe_rfq_code = sanitize_filename(submitted_rfq)
@@ -300,9 +289,7 @@ def vendor_portal():
         wb.close()
 
         rebuild_master_database()
-        return render_template(
-            'success.html', rfq_code=submitted_rfq, vendor_name=vendor_name
-        )
+        return render_template('success.html', rfq_code=submitted_rfq, vendor_name=vendor_name)
 
     wb.close()
     return render_template('index.html', rfq_code=rfq_code)
@@ -310,21 +297,26 @@ def vendor_portal():
 
 @app.route('/purchase-dashboard')
 def purchase_dashboard():
-    raw_slips = [
-        f
-        for f in glob.glob(os.path.join(VENDOR_SLIPS_DIR, '*.xlsx'))
-        if not os.path.basename(f).startswith('~$')
-    ]
+    search_query = request.args.get('q', '').strip().lower()
+
+    raw_slips = [f for f in glob.glob(os.path.join(VENDOR_SLIPS_DIR, '*.xlsx')) if not os.path.basename(f).startswith('~$')]
     raw_slips_info = []
     for f in raw_slips:
         wb = None
         try:
             wb = openpyxl.load_workbook(f, data_only=True)
             ws = wb.active
+            v_name = str(ws['F4'].value or '')
+            r_code = str(ws['F5'].value or '')
+            
+            # Apply search filter if query provided
+            if search_query and search_query not in v_name.lower() and search_query not in r_code.lower():
+                continue
+
             raw_slips_info.append({
                 'filename': os.path.basename(f),
-                'vendor': ws['F4'].value,
-                'rfq': ws['F5'].value,
+                'vendor': v_name,
+                'rfq': r_code,
                 'date': ws['F6'].value,
             })
         except Exception as e:
@@ -334,12 +326,7 @@ def purchase_dashboard():
                 wb.close()
 
     pool_files = glob.glob(os.path.join(COMPARISON_POOL_DIR, '*.xlsx'))
-    pool_files = [
-        f
-        for f in pool_files
-        if not os.path.basename(f).startswith('Kohinoor_Comparative')
-        and not os.path.basename(f).startswith('~$')
-    ]
+    pool_files = [f for f in pool_files if not os.path.basename(f).startswith('Kohinoor_Comparative') and not os.path.basename(f).startswith('~$')]
     pool_slips_info = [os.path.basename(f) for f in pool_files]
 
     comparison_matrix = []
@@ -350,9 +337,9 @@ def purchase_dashboard():
             ws = wb.active
             vendor_name = ws['F4'].value
             source_fname = os.path.basename(f_path)
-            for r in range(13, 16):
+            for r in get_boq_rows(ws):
                 desc = ws.cell(row=r, column=2).value
-                if desc:
+                if desc and str(desc).strip():
                     qty = ws.cell(row=r, column=4).value or 0
                     unit = ws.cell(row=r, column=5).value
                     brand = ws.cell(row=r, column=6).value
@@ -377,6 +364,12 @@ def purchase_dashboard():
     df_master = rebuild_master_database()
     vendor_summary = []
     if not df_master.empty and 'GSTIN' in df_master.columns:
+        if search_query:
+            df_master = df_master[
+                df_master['Vendor_Name'].str.lower().str.contains(search_query, na=False) |
+                df_master['GSTIN'].str.lower().str.contains(search_query, na=False) |
+                df_master['RFQ_Code'].str.lower().str.contains(search_query, na=False)
+            ]
         grouped = df_master.groupby('GSTIN').agg(
             Vendor_Name=('Vendor_Name', 'first'),
             Vendor_Phone=('Vendor_Phone', 'first'),
@@ -394,7 +387,8 @@ def purchase_dashboard():
         raw_slips=raw_slips_info,
         pool_slips=pool_slips_info,
         comparison_matrix=comparison_matrix,
-        vendor_summary=vendor_summary
+        vendor_summary=vendor_summary,
+        search_query=search_query
     )
 
 
@@ -411,7 +405,6 @@ def vendor_analytics(gstin):
     vendor_name = vendor_df['Vendor_Name'].iloc[0]
     total_spend = float(vendor_df['Basic_Amount'].sum())
     total_quotes = int(vendor_df['RFQ_Code'].nunique())
-    
     records = vendor_df.to_dict(orient='records')
     
     chart_labels = vendor_df['Material_Description'].tolist()
@@ -436,11 +429,8 @@ def vendor_analytics(gstin):
 @app.route('/analytics')
 def analytics():
     df = rebuild_master_database()
-
     if not df.empty:
-        df['Basic_Amount'] = pd.to_numeric(
-            df['Basic_Amount'], errors='coerce'
-        ).fillna(0.0)
+        df['Basic_Amount'] = pd.to_numeric(df['Basic_Amount'], errors='coerce').fillna(0.0)
         df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0.0)
         df['Rate_R0'] = pd.to_numeric(df['Rate_R0'], errors='coerce').fillna(0.0)
         df['Rate_R1'] = pd.to_numeric(df['Rate_R1'], errors='coerce').fillna(0.0)
@@ -450,50 +440,29 @@ def analytics():
     total_materials = df['Material_Description'].nunique() if not df.empty else 0
     total_quoted_value = f"{df['Basic_Amount'].sum():,.2f}" if not df.empty else '0.00'
 
-    l1_data = []
-    variance_data = []
-    commercial_data = []
-    category_summary = []
+    l1_data, variance_data, commercial_data, category_summary = [], [], [], []
     master_records = df.to_dict(orient='records') if not df.empty else []
 
     if not df.empty:
-        idx_min = df.groupby(['RFQ_Code', 'Material_Description'])[
-            'Rate_R1'
-        ].idxmin()
+        idx_min = df.groupby(['RFQ_Code', 'Material_Description'])['Rate_R1'].idxmin()
         df_l1 = df.loc[idx_min]
         l1_data = df_l1.to_dict(orient='records')
 
         df_var = df.copy()
-        df_var['Min_Rate'] = df_var.groupby(['RFQ_Code', 'Material_Description'])[
-            'Rate_R1'
-        ].transform('min')
-        df_var['Percentage_Difference_From_L1'] = (
-            (df_var['Rate_R1'] - df_var['Min_Rate']) / df_var['Min_Rate']
-        ) * 100 if not df_var['Min_Rate'].eq(0).all() else 0.0
+        df_var['Min_Rate'] = df_var.groupby(['RFQ_Code', 'Material_Description'])['Rate_R1'].transform('min')
+        df_var['Percentage_Difference_From_L1'] = ((df_var['Rate_R1'] - df_var['Min_Rate']) / df_var['Min_Rate']) * 100 if not df_var['Min_Rate'].eq(0).all() else 0.0
         variance_data = df_var.to_dict(orient='records')
 
-        df_comm = df[[
-            'Vendor_Name',
-            'RFQ_Code',
-            'Transport',
-            'GST_Term',
-            'Delivery',
-            'Payment_Terms',
-            'Source_File',
-        ]].drop_duplicates(subset=['Source_File'])
+        df_comm = df[['Vendor_Name', 'RFQ_Code', 'Transport', 'GST_Term', 'Delivery', 'Payment_Terms', 'Source_File']].drop_duplicates(subset=['Source_File'])
         commercial_data = df_comm.to_dict(orient='records')
 
-        df_cat = (
-            df.groupby('Material_Category')
-            .agg(
-                Total_Spend=('Basic_Amount', 'sum'),
-                Items_Count=('Material_Description', 'count'),
-                Avg_Rate=('Rate_R1', 'mean'),
-                Min_Rate=('Rate_R1', 'min'),
-                Max_Rate=('Rate_R1', 'max'),
-            )
-            .reset_index()
-        )
+        df_cat = df.groupby('Material_Category').agg(
+            Total_Spend=('Basic_Amount', 'sum'),
+            Items_Count=('Material_Description', 'count'),
+            Avg_Rate=('Rate_R1', 'mean'),
+            Min_Rate=('Rate_R1', 'min'),
+            Max_Rate=('Rate_R1', 'max'),
+        ).reset_index()
         category_summary = df_cat.to_dict(orient='records')
 
     return render_template(
@@ -512,50 +481,26 @@ def analytics():
 
 @app.route('/move-to-pool', methods=['POST'])
 def move_to_pool():
-    import time
     filename = request.form.get('filename')
     src = os.path.join(VENDOR_SLIPS_DIR, filename)
     dst = os.path.join(COMPARISON_POOL_DIR, filename)
     if os.path.exists(src):
         if os.path.exists(dst):
-            for _ in range(3):
-                try:
-                    os.remove(dst)
-                    break
-                except PermissionError:
-                    time.sleep(0.2)
-                except Exception:
-                    break
+            robust_remove(dst)
         try:
             shutil.move(src, dst)
         except PermissionError:
             shutil.copy(src, dst)
-            for _ in range(3):
-                try:
-                    os.remove(src)
-                    break
-                except PermissionError:
-                    time.sleep(0.2)
-                except Exception:
-                    break
+            robust_remove(src)
     rebuild_master_database()
     return redirect(url_for('purchase_dashboard'))
 
 
 @app.route('/remove-from-pool', methods=['POST'])
 def remove_from_pool():
-    import time
     filename = request.form.get('filename')
     dst = os.path.join(COMPARISON_POOL_DIR, filename)
-    if os.path.exists(dst):
-        for _ in range(3):
-            try:
-                os.remove(dst)
-                break
-            except PermissionError:
-                time.sleep(0.2)
-            except Exception:
-                break
+    robust_remove(dst)
     rebuild_master_database()
     return redirect(url_for('purchase_dashboard'))
 
@@ -578,7 +523,7 @@ def update_negotiated_rate():
         try:
             wb = openpyxl.load_workbook(file_path)
             ws = wb.active
-            for r in range(13, 16):
+            for r in get_boq_rows(ws):
                 cell_val = ws.cell(row=r, column=2).value
                 if cell_val and str(cell_val).strip() == material_desc:
                     ws.cell(row=r, column=8, value=new_rate_r1)
@@ -601,12 +546,7 @@ def generate_comparison():
         return "<script>alert('Error: Comparison format template sheet missing.'); window.location.href='/purchase-dashboard';</script>", 500
 
     pool_files = glob.glob(os.path.join(COMPARISON_POOL_DIR, '*.xlsx'))
-    pool_files = [
-        f
-        for f in pool_files
-        if not os.path.basename(f).startswith('Kohinoor_Comparative')
-        and not os.path.basename(f).startswith('~$')
-    ]
+    pool_files = [f for f in pool_files if not os.path.basename(f).startswith('Kohinoor_Comparative') and not os.path.basename(f).startswith('~$')]
     
     if len(pool_files) < 2:
         return "<script>alert('Strict Rule Error: Comparison requires a minimum of 2 vendors (maximum 5). Please add more vendors to the comparison pool.'); window.location.href='/purchase-dashboard';</script>", 400
@@ -647,9 +587,11 @@ def generate_comparison():
 
             ws.cell(row=4, column=start_col, value=vendor_name)
 
-            for i in range(3):
-                v_row = 13 + i
+            boq_rows = get_boq_rows(v_ws)
+            for i, v_row in enumerate(boq_rows):
                 target_row = 7 + i
+                if target_row > 11:
+                    break
 
                 desc = v_ws.cell(row=v_row, column=2).value
                 qty = v_ws.cell(row=v_row, column=4).value
@@ -658,7 +600,7 @@ def generate_comparison():
                 rate_r0 = v_ws.cell(row=v_row, column=7).value or 0
                 rate_r1 = v_ws.cell(row=v_row, column=8).value or rate_r0
 
-                if desc:
+                if desc and str(desc).strip():
                     ws.cell(row=target_row, column=2, value=desc)
                     ws.cell(row=target_row, column=3, value=qty)
                     ws.cell(row=target_row, column=4, value=unit)
@@ -666,19 +608,19 @@ def generate_comparison():
                     ws.cell(row=target_row, column=start_col, value=rate_r0)
                     ws.cell(row=target_row, column=start_col + 1, value=rate_r1)
 
-            ws.cell(row=13, column=start_col, value=v_ws['E18'].value)
-            ws.cell(row=14, column=start_col, value=v_ws['E19'].value)
-            ws.cell(row=16, column=start_col, value=v_ws['E27'].value)
-            ws.cell(row=17, column=start_col, value=v_ws['E21'].value)
-            ws.cell(row=18, column=start_col, value=v_ws['E23'].value)
-            ws.cell(row=19, column=start_col, value=v_ws['E22'].value)
-            ws.cell(row=20, column=start_col, value=v_ws['E24'].value)
-            ws.cell(row=21, column=start_col, value=v_ws['E25'].value)
-            ws.cell(row=22, column=start_col, value=v_ws['E26'].value)
-            ws.cell(row=23, column=start_col, value=v_ws['E27'].value)
-            ws.cell(row=24, column=start_col, value=v_ws['E28'].value or v_ws['E22'].value)
-            ws.cell(row=25, column=start_col, value=v_ws['E29'].value or v_ws['E23'].value)
-            ws.cell(row=26, column=start_col, value=v_ws['E30'].value)
+            ws.cell(row=13, column=start_col, value=v_ws['E22'].value)
+            ws.cell(row=14, column=start_col, value=v_ws['E23'].value)
+            ws.cell(row=16, column=start_col, value=v_ws['E31'].value)
+            ws.cell(row=17, column=start_col, value=v_ws['E25'].value)
+            ws.cell(row=18, column=start_col, value=v_ws['E27'].value)
+            ws.cell(row=19, column=start_col, value=v_ws['E26'].value)
+            ws.cell(row=20, column=start_col, value=v_ws['E28'].value)
+            ws.cell(row=21, column=start_col, value=v_ws['E29'].value)
+            ws.cell(row=22, column=start_col, value=v_ws['E30'].value)
+            ws.cell(row=23, column=start_col, value=v_ws['E31'].value)
+            ws.cell(row=24, column=start_col, value=v_ws['E32'].value or v_ws['E26'].value)
+            ws.cell(row=25, column=start_col, value=v_ws['E33'].value or v_ws['E27'].value)
+            ws.cell(row=26, column=start_col, value=v_ws['E34'].value)
         finally:
             if v_wb:
                 v_wb.close()
@@ -704,6 +646,26 @@ def generate_comparison():
     rebuild_master_database()
     return send_file(output_path, as_attachment=True)
 
+# Add this near your other directory definitions at the top of app.py
+ARCHIVE_DIR = os.path.join(BASE_DIR, 'archive')
+os.makedirs(ARCHIVE_DIR, exist_ok=True)
+
+# Add this route alongside your other POST routes
+@app.route('/archive-submission', methods=['POST'])
+def archive_submission():
+    filename = request.form.get('filename')
+    src = os.path.join(VENDOR_SLIPS_DIR, filename)
+    dst = os.path.join(ARCHIVE_DIR, filename)
+    if os.path.exists(src):
+        if os.path.exists(dst):
+            robust_remove(dst)
+        try:
+            shutil.move(src, dst)
+        except PermissionError:
+            shutil.copy(src, dst)
+            robust_remove(src)
+    rebuild_master_database()
+    return redirect(url_for('purchase_dashboard'))
 
 if __name__ == '__main__':
     init_db()
