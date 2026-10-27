@@ -1,83 +1,59 @@
-from datetime import datetime
-import glob
-import os
-import openpyxl
-import pandas as pd
-
-def clean_procurement_dataframe(df):
-    """Standardizes column names and cleans numeric NaNs to prevent crashes."""
-    if df.empty:
-        return df
-        
-    # 1. Standardize columns: strip whitespace, Title Case, replace spaces with underscores
-    df.columns = [str(c).strip().title().replace(' ', '_') for c in df.columns]
-    
-    # 2. Force conversion of numeric columns to prevent Jinja format crashes
-    numeric_columns = ['Rate_R0', 'Rate_R1', 'Quantity', 'Basic_Amount', 'Percentage_Difference_From_L1']
-    for col in numeric_columns:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-            
-    return df
-
-def generate_comparative_statement(rfq_code_target):
-    template_path = "Comparision Format Sheet.xlsx"
-    submissions_dir = "vendor_filled_slips"
-
+@app.route('/generate-comparison', methods=['POST'])
+def generate_comparison():
+    template_path = TEMPLATE_SHEET
     if not os.path.exists(template_path):
-        print(f"Error: Template '{template_path}' not found.")
-        return
+        return "<script>alert('Error: Comparison format template sheet missing.'); window.location.href='/purchase-dashboard';</script>", 500
 
-    # Strictly match files by unique RFQ tracking code
-    pattern = os.path.join(submissions_dir, f"*_{rfq_code_target}_*.xlsx")
-    vendor_files = glob.glob(pattern)
+    pool_files = glob.glob(os.path.join(COMPARISON_POOL_DIR, '*.xlsx'))
+    pool_files = [f for f in pool_files if not os.path.basename(f).startswith('Kohinoor_Comparative') and not os.path.basename(f).startswith('~$')]
+    
+    if len(pool_files) < 2:
+        return "<script>alert('Strict Rule Error: Comparison requires a minimum of 2 vendors (maximum 5). Please add more vendors to the comparison pool.'); window.location.href='/purchase-dashboard';</script>", 400
+    if len(pool_files) > 5:
+        pool_files = pool_files[:5]
 
-    if not vendor_files:
-        print(f"No vendor submissions found for RFQ Code: {rfq_code_target}")
-        return
-
-    if len(vendor_files) > 5:
-        print(
-            f"Warning: Found {len(vendor_files)} vendors. Maximum supported is 5."
-            " Taking first 5."
-        )
-        vendor_files = vendor_files[:5]
-
-    print(
-        f"Found {len(vendor_files)} vendor submission(s) for RFQ:"
-        f" {rfq_code_target}"
-    )
+    comparison_title = request.form.get('comparison_title', 'General Civil Materials Procurement Comparison')
+    timestamp_code = datetime.now().strftime('%Y%m%d-%H%M%S')
+    unique_comp_code = f'COMP-{timestamp_code}'
 
     wb = openpyxl.load_workbook(template_path)
     ws = wb.active
 
-    project_name = ""
-    tower_name = ""
+    def safe_set(row_num, col_num, val):
+        cell = ws.cell(row=row_num, column=col_num)
+        coord = cell.coordinate
+        if isinstance(cell, openpyxl.cell.cell.MergedCell):
+            for merged_range in ws.merged_cells.ranges:
+                if coord in merged_range:
+                    ws.cell(row=merged_range.min_row, column=merged_range.min_col, value=val)
+                    return
+        cell.value = val
 
-    for idx, file_path in enumerate(vendor_files):
-        # Vendor block columns: Vendor A (Cols E,F,G), Vendor B (Cols H,I,J), etc.
-        start_col = 5 + (idx * 3)
+    project_name = ''
+    tower_name = ''
+    target_rfq_code = 'COMPARATIVE'
+
+    for idx, file_path in enumerate(pool_files):
+        # Vendor block columns: Vendor A starts at Col F (6), Vendor B at Col I (9), etc.
+        start_col = 6 + (idx * 3)
         v_wb = None
         try:
             v_wb = openpyxl.load_workbook(file_path, data_only=True)
             v_ws = v_wb.active
 
-            vendor_name = v_ws["F4"].value
-            project_name = v_ws["B4"].value
-            tower_name = v_ws["B5"].value
+            vendor_name = v_ws['F4'].value
+            project_name = v_ws['B4'].value
+            tower_name = v_ws['B5'].value
+            target_rfq_code = v_ws['F5'].value or 'COMPARATIVE'
 
-            print(
-                f"Mapping Vendor {idx+1}: {vendor_name} -> Column block"
-                f" {start_col}-{start_col+2}"
-            )
+            # Set Vendor Name in Row 4 safely
+            safe_set(4, start_col, vendor_name)
 
-            # Vendor Name Header (Row 4)
-            ws.cell(row=4, column=start_col, value=vendor_name)
-
-            # Read BOQ Items (Rows 11, 12, 13 in vendor slips mapped to 7, 8, 9 in comparison sheet)
-            for i in range(3):
-                v_row = 11 + i
-                target_row = 7 + i
+            boq_rows = get_boq_rows(v_ws)
+            for i, v_row in enumerate(boq_rows):
+                target_row = 6 + i  # BOQ items in new template are rows 6 to 10
+                if target_row > 10:
+                    break
 
                 desc = v_ws.cell(row=v_row, column=2).value
                 qty = v_ws.cell(row=v_row, column=4).value
@@ -86,57 +62,53 @@ def generate_comparative_statement(rfq_code_target):
                 rate_r0 = v_ws.cell(row=v_row, column=7).value or 0
                 rate_r1 = v_ws.cell(row=v_row, column=8).value or rate_r0
 
-                if desc:
-                    ws.cell(row=target_row, column=2, value=desc)
-                    ws.cell(row=target_row, column=3, value=qty)
-                    ws.cell(row=target_row, column=4, value=unit)
+                if desc and str(desc).strip():
+                    safe_set(target_row, 2, desc)
+                    safe_set(target_row, 3, brand)   # Make / Brand Offered in Column C
+                    safe_set(target_row, 4, qty)     # Qty in Column D
+                    safe_set(target_row, 5, unit)    # Unit in Column E
+                    safe_set(target_row, start_col, rate_r0)      # Rate R0
+                    safe_set(target_row, start_col + 1, rate_r1)  # Rate R1
 
-                    # Brand Offered (Row 5)
-                    ws.cell(row=5, column=start_col, value=brand)
-                    # Initial Quoted Rate R0
-                    ws.cell(row=target_row, column=start_col, value=rate_r0)
-                    # Negotiated Rate R1
-                    ws.cell(row=target_row, column=start_col + 1, value=rate_r1)
-
-            # Commercial Terms Mapping
+            # Commercial terms mapping for new template rows
             comm_rows = {
-                11: 'E18',  # Transport -> Row 11
-                12: 'E19',  # GST -> Row 12
-                14: 'E27',  # Earlier Supplied -> Row 14
-                15: 'E21',  # Loading -> Row 15
-                16: 'E23',  # Insurance -> Row 16
-                17: 'E22',  # Unloading -> Row 17
-                18: 'E24',  # Erection / Commissioning / Installation -> Row 18
-                19: 'E25',  # Warranty -> Row 19
-                20: 'E26',  # Guarantee -> Row 20
-                21: 'E27',  # Earlier Supplied -> Row 21
-                22: 'E28',  # Delivery Timeline -> Row 22
-                23: 'E29',  # Payment Terms -> Row 23
-                24: 'E30',  # Price Validity -> Row 24
+                12: 'E22',  # Transport
+                13: 'E23',  # GST
+                15: 'E31',  # Earlier Supplied
+                16: 'E25',  # Loading
+                17: 'E27',  # Insurance
+                18: 'E26',  # Unloading
+                19: 'E28',  # Erection
+                20: 'E29',  # Warranty
+                21: 'E30',  # Guarantee
+                23: 'E32',  # Delivery
+                24: 'E33',  # Payment Terms
+                25: 'E34',  # Price Validity
+                26: 'E35',  # Remark
             }
 
             for comp_row, v_cell in comm_rows.items():
                 term_val = v_ws[v_cell].value
-                ws.cell(row=comp_row, column=start_col, value=term_val)
+                safe_set(comp_row, start_col, term_val)
         finally:
             if v_wb:
                 v_wb.close()
 
-    # Update Project Metadata Header
-    ws["B2"] = project_name
-    ws["B3"] = tower_name
-    ws["L2"] = datetime.now().strftime("%Y-%m-%d")
-    ws["L3"] = "Purchase Dept (Automated)"
+    ws['B2'] = project_name
+    ws['B3'] = tower_name
+    ws['M2'] = datetime.now().strftime('%Y-%m-%d')
+    ws['M3'] = 'Purchase Dept (Automated)'
 
-    # Save unique comparative statement named after material/RFQ code
-    output_filename = f"Kohinoor_Comparative_Statement_{rfq_code_target}.xlsx"
-    wb.save(output_filename)
+    safe_target_rfq = sanitize_filename(target_rfq_code)
+    version_num = 1
+    while True:
+        output_filename = f'Kohinoor_Comparative_{safe_target_rfq}_{unique_comp_code}_V{version_num}.xlsx'
+        output_path = os.path.join(COMPARISON_POOL_DIR, output_filename)
+        if not os.path.exists(output_path):
+            break
+        version_num += 1
+
+    wb.save(output_path)
     wb.close()
-    print(
-        f"\nSuccess! Comparative Statement generated: '{output_filename}' with"
-        f" {len(vendor_files)} vendor(s)."
-    )
-
-if __name__ == "__main__":
-    target_rfq = "KWV-T1-ACME-001"
-    generate_comparative_statement(target_rfq)
+    rebuild_master_database()
+    return send_file(output_path, as_attachment=True)

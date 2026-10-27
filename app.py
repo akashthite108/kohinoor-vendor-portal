@@ -443,16 +443,13 @@ def analytics():
     master_records = df.to_dict(orient='records') if not df.empty else []
 
     if not df.empty:
-        # Filter out non-material rows (Commercial Parameter, Basic Value, etc.) to prevent NaN / incorrect baselines
         df_materials = df[~df['Material_Description'].isin(['Commercial Parameter', 'Basic Value', 'nan', 'NaN', '']) & df['Material_Description'].notna()].copy()
 
         if not df_materials.empty:
-            # Correct L1 baseline extraction per material description
             idx_min = df_materials.groupby('Material_Description')['Rate_R1'].idxmin()
             df_l1 = df_materials.loc[idx_min]
             l1_data = df_l1.to_dict(orient='records')
 
-            # Correct Variance calculation against global L1 minimum rate per material
             df_var = df_materials.copy()
             df_var['L1_Baseline'] = df_var.groupby('Material_Description')['Rate_R1'].transform('min')
             df_var['Percentage_Difference_From_L1'] = ((df_var['Rate_R1'] - df_var['L1_Baseline']) / df_var['L1_Baseline'] * 100).round(2)
@@ -565,8 +562,9 @@ def generate_comparison():
     wb = openpyxl.load_workbook(template_path)
     ws = wb.active
 
-    def safe_set(coord, val):
-        cell = ws[coord]
+    def safe_set(row_num, col_num, val):
+        cell = ws.cell(row=row_num, column=col_num)
+        coord = cell.coordinate
         if isinstance(cell, openpyxl.cell.cell.MergedCell):
             for merged_range in ws.merged_cells.ranges:
                 if coord in merged_range:
@@ -579,7 +577,8 @@ def generate_comparison():
     target_rfq_code = 'COMPARATIVE'
 
     for idx, file_path in enumerate(pool_files):
-        start_col = 5 + (idx * 3)
+        # Vendor block columns: Vendor A starts at Col F (6), Vendor B at Col I (9), etc.
+        start_col = 6 + (idx * 3)
         v_wb = None
         try:
             v_wb = openpyxl.load_workbook(file_path, data_only=True)
@@ -590,12 +589,13 @@ def generate_comparison():
             tower_name = v_ws['B5'].value
             target_rfq_code = v_ws['F5'].value or 'COMPARATIVE'
 
-            ws.cell(row=4, column=start_col, value=vendor_name)
+            # Set Vendor Name safely in Row 4
+            safe_set(4, start_col, vendor_name)
 
             boq_rows = get_boq_rows(v_ws)
             for i, v_row in enumerate(boq_rows):
-                target_row = 7 + i
-                if target_row > 11:
+                target_row = 6 + i  # BOQ items in new template are rows 6 to 10
+                if target_row > 10:
                     break
 
                 desc = v_ws.cell(row=v_row, column=2).value
@@ -606,36 +606,41 @@ def generate_comparison():
                 rate_r1 = v_ws.cell(row=v_row, column=8).value or rate_r0
 
                 if desc and str(desc).strip():
-                    ws.cell(row=target_row, column=2, value=desc)
-                    ws.cell(row=target_row, column=3, value=qty)
-                    ws.cell(row=target_row, column=4, value=unit)
-                    ws.cell(row=5, column=start_col, value=brand)
-                    ws.cell(row=target_row, column=start_col, value=rate_r0)
-                    ws.cell(row=target_row, column=start_col + 1, value=rate_r1)
+                    safe_set(target_row, 2, desc)
+                    safe_set(target_row, 3, brand)   # Make / Brand Offered in Column C
+                    safe_set(target_row, 4, qty)     # Qty in Column D
+                    safe_set(target_row, 5, unit)    # Unit in Column E
+                    safe_set(target_row, start_col, rate_r0)      # Rate R0
+                    safe_set(target_row, start_col + 1, rate_r1)  # Rate R1
 
-            ws.cell(row=13, column=start_col, value=v_ws['E22'].value)
-            ws.cell(row=14, column=start_col, value=v_ws['E23'].value)
-            ws.cell(row=16, column=start_col, value=v_ws['E31'].value)
-            ws.cell(row=17, column=start_col, value=v_ws['E25'].value)
-            ws.cell(row=18, column=start_col, value=v_ws['E27'].value)
-            ws.cell(row=19, column=start_col, value=v_ws['E26'].value)
-            ws.cell(row=20, column=start_col, value=v_ws['E28'].value)
-            ws.cell(row=21, column=start_col, value=v_ws['E29'].value)
-            ws.cell(row=22, column=start_col, value=v_ws['E30'].value)
-            ws.cell(row=23, column=start_col, value=v_ws['E31'].value)
-            ws.cell(row=24, column=start_col, value=v_ws['E32'].value or v_ws['E26'].value)
-            ws.cell(row=25, column=start_col, value=v_ws['E33'].value or v_ws['E27'].value)
-            ws.cell(row=26, column=start_col, value=v_ws['E34'].value)
+            # Commercial terms mapping for new template rows
+            comm_rows = {
+                12: 'E22',  # Transport
+                13: 'E23',  # GST
+                15: 'E31',  # Earlier Supplied
+                16: 'E25',  # Loading
+                17: 'E27',  # Insurance
+                18: 'E26',  # Unloading
+                19: 'E28',  # Erection
+                20: 'E29',  # Warranty
+                21: 'E30',  # Guarantee
+                23: 'E32',  # Delivery
+                24: 'E33',  # Payment Terms
+                25: 'E34',  # Price Validity
+                26: 'E35',  # Remark
+            }
+
+            for comp_row, v_cell in comm_rows.items():
+                term_val = v_ws[v_cell].value
+                safe_set(comp_row, start_col, term_val)
         finally:
             if v_wb:
                 v_wb.close()
 
-    safe_set('B1', f"Comparison Subject: {comparison_title}")
-    safe_set('L1', f"Tracking Code: {unique_comp_code}")
     ws['B2'] = project_name
     ws['B3'] = tower_name
-    ws['L2'] = datetime.now().strftime('%Y-%m-%d')
-    ws['L3'] = 'Purchase Dept (Automated)'
+    ws['M2'] = datetime.now().strftime('%Y-%m-%d')
+    ws['M3'] = 'Purchase Dept (Automated)'
 
     safe_target_rfq = sanitize_filename(target_rfq_code)
     version_num = 1
