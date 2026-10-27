@@ -182,7 +182,7 @@
                         <tr>
                             <td><span class="badge-rfq">{{ row.RFQ_Code.split(']')[0] if ']' in row.RFQ_Code|string else row.RFQ_Code }}</span></td>
                             <td><b>{{ row.Material_Description }}</b></td>
-                            <td><span class="badge-l1">₹{{ row.Rate_R0 }}</span></td>
+                            <td><span class="badge-l1">₹{{ row.Rate_R1 }}</span></td>
                             <td><b>{{ row.Vendor_Name }}</b></td>
                             <td>{{ row.Brand }}</td>
                         </tr>
@@ -249,8 +249,8 @@
                             <td><span class="badge-rfq">{{ row.RFQ_Code.split(']')[0] if ']' in row.RFQ_Code|string else row.RFQ_Code }}</span></td>
                             <td><b>{{ row.Vendor_Name }}</b></td>
                             <td>{{ row.Material_Description }}</td>
-                            <td>₹{{ row.Rate_R0 }}</td>
-                            <td>₹{{ row.Min_Rate }}</td>
+                            <td>₹{{ row.Rate_R1 }}</td>
+                            <td>₹{{ row.L1_Baseline }}</td>
                             <td>
                                 {% if row.Percentage_Difference_From_L1 == 0 %}
                                     <span class="badge-diff-zero">0.0% (L1)</span>
@@ -347,17 +347,14 @@
 
     <script>
         function switchTab(evt, tabId) {
-            // Hide all tab contents
             const contents = document.getElementsByClassName("tab-content");
             for (let i = 0; i < contents.length; i++) {
                 contents[i].classList.remove("active");
             }
-            // Remove active class from all buttons
             const buttons = document.getElementsByClassName("tab-btn");
             for (let i = 0; i < buttons.length; i++) {
                 buttons[i].classList.remove("active");
             }
-            // Show current tab and add active class to button
             document.getElementById(tabId).classList.add("active");
             evt.currentTarget.classList.add("active");
         }

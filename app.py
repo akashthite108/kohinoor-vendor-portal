@@ -309,7 +309,6 @@ def purchase_dashboard():
             v_name = str(ws['F4'].value or '')
             r_code = str(ws['F5'].value or '')
             
-            # Apply search filter if query provided
             if search_query and search_query not in v_name.lower() and search_query not in r_code.lower():
                 continue
 
@@ -444,14 +443,20 @@ def analytics():
     master_records = df.to_dict(orient='records') if not df.empty else []
 
     if not df.empty:
-        idx_min = df.groupby(['RFQ_Code', 'Material_Description'])['Rate_R1'].idxmin()
-        df_l1 = df.loc[idx_min]
-        l1_data = df_l1.to_dict(orient='records')
+        # Filter out non-material rows (Commercial Parameter, Basic Value, etc.) to prevent NaN / incorrect baselines
+        df_materials = df[~df['Material_Description'].isin(['Commercial Parameter', 'Basic Value', 'nan', 'NaN', '']) & df['Material_Description'].notna()].copy()
 
-        df_var = df.copy()
-        df_var['Min_Rate'] = df_var.groupby(['RFQ_Code', 'Material_Description'])['Rate_R1'].transform('min')
-        df_var['Percentage_Difference_From_L1'] = ((df_var['Rate_R1'] - df_var['Min_Rate']) / df_var['Min_Rate']) * 100 if not df_var['Min_Rate'].eq(0).all() else 0.0
-        variance_data = df_var.to_dict(orient='records')
+        if not df_materials.empty:
+            # Correct L1 baseline extraction per material description
+            idx_min = df_materials.groupby('Material_Description')['Rate_R1'].idxmin()
+            df_l1 = df_materials.loc[idx_min]
+            l1_data = df_l1.to_dict(orient='records')
+
+            # Correct Variance calculation against global L1 minimum rate per material
+            df_var = df_materials.copy()
+            df_var['L1_Baseline'] = df_var.groupby('Material_Description')['Rate_R1'].transform('min')
+            df_var['Percentage_Difference_From_L1'] = ((df_var['Rate_R1'] - df_var['L1_Baseline']) / df_var['L1_Baseline'] * 100).round(2)
+            variance_data = df_var.to_dict(orient='records')
 
         df_comm = df[['Vendor_Name', 'RFQ_Code', 'Transport', 'GST_Term', 'Delivery', 'Payment_Terms', 'Source_File']].drop_duplicates(subset=['Source_File'])
         commercial_data = df_comm.to_dict(orient='records')
@@ -646,11 +651,11 @@ def generate_comparison():
     rebuild_master_database()
     return send_file(output_path, as_attachment=True)
 
-# Add this near your other directory definitions at the top of app.py
+
 ARCHIVE_DIR = os.path.join(BASE_DIR, 'archive')
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
-# Add this route alongside your other POST routes
+
 @app.route('/archive-submission', methods=['POST'])
 def archive_submission():
     filename = request.form.get('filename')
@@ -666,6 +671,7 @@ def archive_submission():
             robust_remove(src)
     rebuild_master_database()
     return redirect(url_for('purchase_dashboard'))
+
 
 if __name__ == '__main__':
     init_db()

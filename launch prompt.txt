@@ -1,0 +1,18 @@
+cd "Y:\Akash\Vendor Portal"
+python app.py
+
+
+2. Browser URLs for Your Dashboards
+Once your local server is running, open your web browser and use these exact links:
+
+Vendor RFQ Submission Form (Vendor Portal):
+[http://127.0.0.1:8080/](http://127.0.0.1:8080/)
+(Used by vendors to fill out and submit their bills of quantities and commercial terms).
+
+Purchase & Vendor Management Dashboard:
+[http://127.0.0.1:8080/purchase-dashboard](http://127.0.0.1:8080/purchase-dashboard)
+(Your main internal command center to manage incoming submissions, archive files, manage comparison pools, and handle R1 negotiations).
+
+Procurement Analytics & L1 Benchmarking Dashboard:
+[http://127.0.0.1:8080/analytics](http://127.0.0.1:8080/analytics)
+(Your executive view featuring L1 benchmarking, variance charts, category spends, and master audit logs).
